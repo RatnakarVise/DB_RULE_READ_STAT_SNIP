@@ -49,15 +49,26 @@ def fields_match(sort_fields: List[str], key_fields: List[str]) -> bool:
 
 
 def get_line(text: str, pos: int) -> int:
+    """Relative line number inside this unit's code."""
     return text.count("\n", 0, pos) + 1
 
 
-def extract_line(text: str, pos: int) -> str:
-    s = text.rfind("\n", 0, pos) + 1
-    e = text.find("\n", pos)
-    if e == -1:
-        e = len(text)
-    return text[s:e].strip()
+def get_multiline_snippet(text: str, start: int, end: int) -> str:
+    """
+    Multi-line logical snippet around the READ TABLE:
+    full line(s) containing the match span.
+    """
+    line_start = text.rfind("\n", 0, start)
+    if line_start == -1:
+        line_start = 0
+    else:
+        line_start += 1
+
+    line_end = text.find("\n", end)
+    if line_end == -1:
+        line_end = len(text)
+
+    return text[line_start:line_end]
 
 
 def find_read_table_usage(txt: str):
@@ -71,8 +82,9 @@ def find_read_table_usage(txt: str):
         itab = m.group("itab")
         keys_raw = m.group("keys")
 
-        key_fields = re.findall(r"(\w+)\s*=", keys_raw, re.IGNORECASE)
+        key_fields = re.findall(r"(\w+)(?=\s*\+\s*\d+\s*\(\d+\)\s*=|\s*=)", keys_raw, re.IGNORECASE)
         key_fields = [f.upper() for f in key_fields]
+
 
         sort_fields = sort_map.get(itab.upper(), [])
         already_sorted = fields_match(sort_fields, key_fields)
@@ -82,7 +94,6 @@ def find_read_table_usage(txt: str):
                 "span": m.span(),
                 "itab": itab,
                 "keys": key_fields,
-                "snippet": extract_line(txt, m.start()),
                 "suggestion": f"SORT {itab} BY {', '.join(key_fields)}." if key_fields else None
             })
 
@@ -111,6 +122,8 @@ class Unit(BaseModel):
     inc_name: str
     type: str
     name: Optional[str] = None
+    start_line: Optional[int] = 0
+    end_line: Optional[int] = 0
     code: Optional[str] = ""
     findings: Optional[List[Finding]] = None
 
@@ -121,21 +134,35 @@ class Unit(BaseModel):
 
 def scan_unit(unit: Unit):
     src = unit.code or ""
-    findings = []
+    findings: List[Finding] = []
+
+    base = unit.start_line or 0  # first line of this block in global program
 
     for m in find_read_table_usage(src):
+        span_start, span_end = m["span"]
+
+        # Relative line inside this block
+        rel_line = get_line(src, span_start)
+        # Absolute line (first line of block = unit.start_line)
+        starting_line_abs = base + (rel_line - 1)
+
+        # Multi-line snippet around the READ TABLE
+        snippet = get_multiline_snippet(src, span_start, span_end)
+        snippet_line_count = snippet.count("\n") + 1
+        ending_line_abs = starting_line_abs + snippet_line_count - 1
+
         findings.append(Finding(
             prog_name=unit.pgm_name,
             incl_name=unit.inc_name,
             types=unit.type,
             blockname=unit.name,
-            starting_line=get_line(src, m["span"][0]),
-            ending_line=get_line(src, m["span"][1]),
+            starting_line=starting_line_abs,
+            ending_line=ending_line_abs,
             issues_type="READ_TABLE_Without_SORT",
-            severity="warning",
+            severity="error",  # always error
             message=f"READ TABLE on '{m['itab']}' without proper SORT for keys {m['keys']}.",
             suggestion=m["suggestion"],
-            snippet=m["snippet"]
+            snippet=snippet.replace("\n", "\\n")
         ))
 
     out = unit.model_dump()

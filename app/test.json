@@ -1,0 +1,11 @@
+[
+  {
+    "pgm_name": "ZTEST_READTAB",
+    "inc_name": "ZTEST_READTAB",
+    "type": "PROG",
+    "name": "MAIN",
+    "start_line": 100,
+    "end_line": 180,
+    "code": "DATA: BEGIN OF ls_item,\n        matnr TYPE matnr,\n        werks TYPE werks_d,\n      END OF ls_item.\nDATA lt_item TYPE TABLE OF ls_item.\nDATA ls_wa TYPE ls_item.\n\nSELECT * FROM mara INTO TABLE lt_item.\n\n* Some logic\nLOOP AT lt_item INTO ls_wa.\n  IF ls_wa-matnr = '12345'.\n    WRITE: / ls_wa-werks.\n  ENDIF.\nENDLOOP.\n\nREAD TABLE lt_item WITH KEY matnr+0(3) = '12345'.\nWRITE: / 'Done'."
+  }
+]
